@@ -1,4 +1,5 @@
 #include "frame.h"
+#include "config.h"
 #include "io.h"
 #include "stdint.h"
 #include <stdint.h>
@@ -44,25 +45,25 @@ int recv_frame(int fd, Frame *out) {
   out->payload = NULL;
   uint8_t hdr[HEADER_SIZE];
   if (read_all(fd, hdr, HEADER_SIZE) == -1) {
-    fprintf(stderr, "recv: header\n");
+    DEBUG_LOG(stderr, "recv: header\n");
     return -1;
   };
   uint8_t type;
   uint32_t len;
   decode_header(hdr, &type, &len);
   if (len > MAX_PAYLOAD) {
-    fprintf(stderr, "recv: too big\n");
+    DEBUG_LOG(stderr, "recv: too big\n");
     return -1; // can't recieve this large payload
   }
   uint8_t *payload = NULL;
   if (len > 0) {
     payload = malloc(len);
     if (payload == NULL) { // only meaningful when len > 0
-      fprintf(stderr, "recv: malloc\n");
+      DEBUG_LOG(stderr, "recv: malloc\n");
       return -1;
     }
     if (read_all(fd, payload, len) == -1) {
-      fprintf(stderr, "recv: payload\n");
+      DEBUG_LOG(stderr, "recv: payload\n");
       free(payload);
       return -1;
     }

@@ -1,25 +1,22 @@
 #include "config.h"
+#include "frame.h"
 #include "io.h"
 #include "net.h"
 #include "unistd.h"
-#include <stddef.h>
 
-int main() {
+int main(void) {
   int serverfd = tcp_listen(port);
   int connfd = tcp_accept(serverfd);
-
-  char rbuf[buffSize];
-  ssize_t n = recv_msg(rbuf, connfd, sizeof rbuf);
-  if (n <= 0) {
-    perror("recv");
-    return 1;
+  Frame in;
+  while (recv_frame(connfd, &in) == 0) {
+    printf("got type=%u len=%u: ", in.type, in.len);
+    printf("\n");
+    int done = (in.type == MSG_CLOSE);
+    int rc = send_frame(connfd, &in);
+    frame_free(&in);
+    if (rc < 0 || done)
+      break;
   }
-  printf("got %zd bytes: %.*s\n", n, (int)n,
-         rbuf); // rbuf isn't null-terminated
-
-  const char *reply = "Your message has been read by the server\n";
-  send_msg(reply, connfd, strlen(reply));
-
   close(connfd);
   close(serverfd);
   return 0;
