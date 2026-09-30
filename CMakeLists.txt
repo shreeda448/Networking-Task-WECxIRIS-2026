@@ -13,3 +13,6 @@ add_executable(client
     io.c
     net.c
 )
+add_executable(test_frame test_frame.c frame.c io.c)
+target_compile_options(test_frame PRIVATE -fsanitize=address,undefined -g)
+target_link_options(test_frame PRIVATE -fsanitize=address,undefined)
