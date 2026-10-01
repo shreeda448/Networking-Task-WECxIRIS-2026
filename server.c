@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 int main(void) {
-  if (!dh_init()) {
+  if (dh_init() < 0) {
     fprintf(stderr, "dh_init failed\n");
     return 1;
   }

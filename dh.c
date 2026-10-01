@@ -11,10 +11,12 @@ int dh_init(void) {
     return 0;
   s_ctx = BN_CTX_new();
   s_g = BN_new();
-  if (!s_ctx || !s_g || !BN_set_word(s_g, DH_G_VALUE))
+  if (!s_ctx || !s_g || !BN_set_word(s_g, DH_G_VALUE)) {
     goto fail;
-  if (!BN_hex2bn(&s_p, DH_P_HEX))
+  }
+  if (!BN_hex2bn(&s_p, DH_P_HEX)) {
     goto fail;
+  }
   return 0;
 fail:
   dh_cleanup();
