@@ -14,6 +14,8 @@ int tcp_listen(int port_num) {
     exit(-1);
   }
   printf("socket created successfully\n");
+  int val = 1;
+  setsockopt(serverSocketfd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
   struct sockaddr_in socketAddress = {AF_INET, htons(port_num),
                                       inet_addr("127.0.0.1")};
   int bindResult = bind(serverSocketfd, (struct sockaddr *)&socketAddress,

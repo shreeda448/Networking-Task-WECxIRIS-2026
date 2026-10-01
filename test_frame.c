@@ -2,6 +2,7 @@
 #include "io.h"
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -31,7 +32,7 @@ static void test_slow_writer(void) {
       write(sv[1], &i, 1);
       usleep(50000);
     }
-    exit(0);
+    _exit(0);
   }
   close(sv[1]);
   uint8_t buf[5];
@@ -163,7 +164,7 @@ static void test_max_size_frame(void) {
     Frame f = {MSG_DATA, MAX_PAYLOAD, buf};
     int rc = send_frame(sv[1], &f);
     free(buf);
-    exit(rc == 0 ? 0 : 1);
+    _exit(rc == 0 ? 0 : 1);
   }
   close(sv[1]); // parent: receiver
   Frame r;
