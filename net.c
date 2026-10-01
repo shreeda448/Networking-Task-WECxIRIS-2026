@@ -16,8 +16,10 @@ int tcp_listen(int port_num) {
   printf("socket created successfully\n");
   int val = 1;
   setsockopt(serverSocketfd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
-  struct sockaddr_in socketAddress = {AF_INET, htons(port_num),
-                                      inet_addr("127.0.0.1")};
+  struct sockaddr_in socketAddress = {.sin_family = AF_INET,
+                                      .sin_port = htons(port_num),
+                                      .sin_addr.s_addr =
+                                          inet_addr("127.0.0.1")};
   int bindResult = bind(serverSocketfd, (struct sockaddr *)&socketAddress,
                         sizeof(socketAddress));
   if (bindResult == -1) {
@@ -26,6 +28,10 @@ int tcp_listen(int port_num) {
   }
   int maxPendingConn = 1;
   int listenResult = listen(serverSocketfd, maxPendingConn);
+  if (listenResult < 0) {
+    perror("listening error\n");
+    exit(-1);
+  }
   printf("Server is running and listening on port 8080...\n");
   return serverSocketfd;
 }
@@ -50,8 +56,10 @@ int tcp_connect() {
     exit(-1);
   }
   printf("socket created successfully\n");
-  struct sockaddr_in socketAddress = {AF_INET, htons(port),
-                                      inet_addr("127.0.0.1")};
+  struct sockaddr_in socketAddress = {.sin_family = AF_INET,
+                                      .sin_port = htons(port),
+                                      .sin_addr.s_addr =
+                                          inet_addr("127.0.0.1")};
   int connectResult = connect(clientSocketfd, (struct sockaddr *)&socketAddress,
                               sizeof(socketAddress));
   if (connectResult == -1) {

@@ -1,4 +1,5 @@
 #include "config.h"
+#include "dh.h"
 #include "frame.h"
 #include "io.h"
 #include "net.h"
@@ -6,6 +7,10 @@
 #include <stdint.h>
 
 int main(void) {
+  if (!dh_init()) {
+    fprintf(stderr, "dh_init failed\n");
+    return 1;
+  }
   int serverfd = tcp_listen(port);
   int connfd = tcp_accept(serverfd);
   Frame in;
@@ -25,5 +30,6 @@ int main(void) {
   }
   close(connfd);
   close(serverfd);
+  dh_cleanup();
   return 0;
 }
