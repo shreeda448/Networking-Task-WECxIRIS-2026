@@ -1,64 +1,49 @@
 #include "config.h"
 #include "frame.h"
+#include "handshake.h"
 #include "io.h"
 #include "net.h"
 #include "stdio.h"
-#include "stdlib.h"
 #include "unistd.h"
+#include <openssl/bn.h>
 #include <stdint.h>
-#include <string.h>
 #include <sys/types.h>
 
-static int round_trip(int fd, uint8_t type, const uint8_t *data, uint32_t len) {
-  Frame out = {type, len, (uint8_t *)data};
-  Frame in;
-  if (send_frame(fd, &out) < 0)
-    return -1;
-  if (recv_frame(fd, &in) < 0)
-    return -1;
-
-  int same = in.type == out.type && in.len == out.len &&
-             (len == 0 || memcmp(in.payload, data, len) == 0);
-  printf("type=%u len=%u: %s\n", type, len, same ? "PASS" : "FAIL");
-  frame_free(&in);
-  return same ? 0 : -1;
-}
-
 int main(void) {
+  if (dh_init() < 0) {
+    fprintf(stderr, "dh_init failed\n");
+    return 1;
+  }
   int fd = tcp_connect();
-  int failures = 0;
-
-  const char *hello = "hello";
-  failures += round_trip(fd, MSG_HELLO, (const uint8_t *)hello, 5) < 0;
-
-  uint32_t big_len = 100 * 1024; // bigger than one recv typically returns
-  uint8_t *big;
-  uint8_t *t = malloc(big_len);
-  if (t == NULL) {
-    close(fd);
-    return 1;
+  // client role in diffie hellman key-exchange
+  //  Generate the private key
+  //  Generate the public key
+  //  send the public key to the server (in payload), type HELLO
+  // Recieve the public key of the server , type HELLO
+  // Generate the shared secret key
+  // Generate the transcript using the public  keys
+  // free the public keys and private keys
+  //  Generate the derived keys
+  // free the shared secret key
+  // recieve the ALERT/FINISHED
+  // start transmitting the data
+  Keys *k = gen_key_pair();
+  if (!k) {
+    goto clean;
   }
-  big = t;
-  for (uint32_t i = 0; i < big_len; i++)
-    big[i] = i % 251;
-  if (round_trip(fd, MSG_DATA, big, big_len) < 0) {
-    close(fd);
-    free(big);
-    return 1;
-  };
-  free(big);
-
-  uint8_t bin[] = {0x00, 0xFF, 0x10, 0x00}; // zero bytes inside a payload
-  if (round_trip(fd, MSG_ALERT, bin, sizeof bin) < 0) {
-    close(fd);
-    return 1;
+  int res = do_handshake_client(fd, k);
+  if (res == -1) {
+    cleanup_keys(k);
+    goto clean;
   }
-
-  if (round_trip(fd, MSG_CLOSE, NULL, 0) < 0) {
-    close(fd);
-    return 1;
-  };
-
+  fprintf(stdout, "handshake successfull\n");
+  cleanup_keys(k);
+  free(k);
   close(fd);
-  return failures ? 1 : 0;
+  dh_cleanup();
+  return 0;
+clean:
+  close(fd);
+  dh_cleanup();
+  return 1;
 }
