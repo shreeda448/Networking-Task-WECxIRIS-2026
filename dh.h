@@ -1,4 +1,7 @@
+#ifndef CSL_DH_H
+#define CSL_DH_H
 #include "openssl/bn.h"
+#include <stdint.h>
 #define DH_PUB_LEN 256    // 2048 bits, big-endian on the wire
 int dh_init(void);        // parse p and g, build a BN_CTX; 0 on success
 void dh_cleanup(void);    // frees the memory of  these BIGNUM's
@@ -24,3 +27,4 @@ void cleanup_keys(Keys *k);
 
 int valid_priv_key(BIGNUM *priv);
 int valid_pub_key(BIGNUM *pub);
+#endif

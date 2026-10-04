@@ -1,11 +1,11 @@
 #include "handshake.h"
+#include "dh.h"
 #include "frame.h"
+#include "kdf.h"
 #include <openssl/bn.h>
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
-#include <openssl/kdf.h>
-#include <sched.h>
-#include <stdint.h>
 #include <string.h>
 
 // just a temperory helper to print hex
@@ -65,174 +65,126 @@ Frame *gen_hello_msg(Keys *k) {
 };
 
 int do_handshake_client(int fd, Keys *k) {
-  // send hello msg, public key to server
-  if (!k) {
+  if (!k)
     return -1;
-  }
-  Frame *hello_msg_client = gen_hello_msg(k);
-  if (!hello_msg_client) {
-    cleanup_keys(k);
-    return -1;
-  }
-  int res = send_frame(fd, hello_msg_client);
-  // if frame was not sent
-  if (res == -1) {
-    frame_free(hello_msg_client);
-    cleanup_keys(k);
-    return -1;
-  }
-  // recieve hello msg, public key from server
-  Frame hello_msg_server;
-  res = recv_frame(fd, &hello_msg_server);
-  // if frame was not recieved
-  if (res == -1) {
-    frame_free(hello_msg_client);
-    cleanup_keys(k);
-    return -1;
-  }
-  // if the recieved message is not of type HELLO or is trucated
-  if (hello_msg_server.type != MSG_HELLO ||
-      hello_msg_server.len != DH_PUB_LEN) {
-    frame_free(&hello_msg_server);
-    frame_free(hello_msg_client);
-    cleanup_keys(k);
-    return -1;
-  }
-  // convert the payload from bytes to BIGNUM
-  BIGNUM *ret = BN_new();
-  if (!BN_bin2bn(hello_msg_server.payload, hello_msg_server.len, ret)) {
-    frame_free(&hello_msg_server);
-    frame_free(hello_msg_client);
-    cleanup_keys(k);
-    BN_free(ret);
-    return -1;
-  };
-  // validate the public key
-  if (!valid_pub_key(ret)) {
-    frame_free(&hello_msg_server);
-    frame_free(hello_msg_client);
-    cleanup_keys(k);
-    BN_free(ret);
-    return -1;
-  }
-  // generate the shared secret
-  BIGNUM *shared_secret = dh_generate_shared(k->private_key, ret);
-  if (!shared_secret) {
-    frame_free(&hello_msg_server);
-    frame_free(hello_msg_client);
-    cleanup_keys(k);
-    BN_free(ret);
-    return -1;
-  }
-
-  D_Keys *dkey = derive_keys(shared_secret, ret, k->public_key);
+  int rc = -1;
+  Frame *hello_out = NULL;
+  Frame hello_in = {0};
+  BIGNUM *peer_pub = NULL;
+  BIGNUM *shared_secret = NULL;
+  D_Keys *dkey = NULL;
+  // send our HELLO (public key) to the server
+  hello_out = gen_hello_msg(k);
+  if (!hello_out || send_frame(fd, hello_out) == -1)
+    goto cleanup;
+  // receive the server's HELLO and check type and length
+  if (recv_frame(fd, &hello_in) == -1)
+    goto cleanup;
+  if (hello_in.type != MSG_HELLO || hello_in.len != DH_PUB_LEN)
+    goto cleanup;
+  // bytes -> BIGNUM (allocates it for us), then validate
+  peer_pub = BN_bin2bn(hello_in.payload, hello_in.len, NULL);
+  if (!peer_pub || !valid_pub_key(peer_pub))
+    goto cleanup;
+  shared_secret = dh_generate_shared(k->private_key, peer_pub);
+  if (!shared_secret)
+    goto cleanup;
+  dkey = derive_keys(shared_secret, peer_pub, k->public_key);
+  if (!dkey)
+    goto cleanup;
   print_hex("encryption_client", dkey->encryption_client, 32);
   print_hex("encryption_server", dkey->encryption_server, 32);
   print_hex("client_mac_key", dkey->client_mac_key, 32);
   print_hex("server_mac_key", dkey->server_mac_key, 32);
-  return 0;
-};
-
-int do_handshake_server(int fd, Keys *k) {
-  if (!k) {
-    return -1;
+  rc = 0;
+cleanup:
+  if (hello_out) {
+    frame_free(hello_out);
+    free(hello_out);
   }
-  // recieve HELLO from the client
-  Frame hello_from_client;
-  int res = recv_frame(fd, &hello_from_client);
-  if (res == -1) {
-    frame_free(&hello_from_client);
-    cleanup_keys(k);
-    return -1;
-  }
-  // validate message type and payload length
-  if (hello_from_client.type != MSG_HELLO ||
-      hello_from_client.len != DH_PUB_LEN) {
-    frame_free(&hello_from_client);
-    cleanup_keys(k);
-    return -1;
-  }
-
-  // convert the payload from bytes to BIGNUM
-  BIGNUM *ret = BN_new();
-  if (!BN_bin2bn(hello_from_client.payload, hello_from_client.len, ret)) {
-    frame_free(&hello_from_client);
-    cleanup_keys(k);
-    BN_free(ret);
-    return -1;
-  };
-
-  // validate the public key
-  if (!valid_pub_key(ret)) {
-    frame_free(&hello_from_client);
-    cleanup_keys(k);
-    BN_free(ret);
-    return -1;
-  }
-  // generate shared_secret
-  BIGNUM *shared_secret = dh_generate_shared(k->private_key, ret);
-  if (!shared_secret) {
-    frame_free(&hello_from_client);
-    cleanup_keys(k);
-    BN_free(ret);
-    return -1;
-  }
-  // send HELLO to the client
-  Frame *hello_to_client = gen_hello_msg(k);
-  if (!hello_to_client) {
-    frame_free(&hello_from_client);
-    cleanup_keys(k);
-    return -1;
-  }
-  res = send_frame(fd, hello_to_client);
-  if (res == -1) {
-    frame_free(&hello_from_client);
-    frame_free(hello_to_client);
-    cleanup_keys(k);
-    return -1;
-  }
-  D_Keys *dkey = derive_keys(shared_secret, k->public_key, ret);
-  print_hex("encryption_client", dkey->encryption_client, 32);
-  print_hex("encryption_server", dkey->encryption_server, 32);
-  print_hex("client_mac_key", dkey->client_mac_key, 32);
-  print_hex("server_mac_key", dkey->server_mac_key, 32);
-  return 0;
-};
-
-void short_hmac(const uint8_t *key, int key_len, const uint8_t *data,
-                int data_len, uint8_t *out) {
-  uint32_t out_len;
-  // key = salt = public_key_client || public_key_server
-  // data = shared_secret
-  // *out = output buffer
-  // out_len = number of bytes written
-  HMAC(EVP_sha256(), key, key_len, data, data_len, out, &out_len);
+  frame_free(&hello_in);
+  BN_free(peer_pub);
+  BN_clear_free(shared_secret);
+  OPENSSL_clear_free(dkey, sizeof *dkey);
+  cleanup_keys(k);
+  return rc;
 }
 
-D_Keys *derive_keys(BIGNUM *shared_secret, BIGNUM *pub_server,
-                    BIGNUM *pub_client) {
-  D_Keys *keys = malloc(sizeof(D_Keys));
+int do_handshake_server(int fd, Keys *k) {
+  if (!k)
+    return -1;
+  int rc = -1;
+  Frame hello_in = {0};
+  Frame *hello_out = NULL;
+  BIGNUM *peer_pub = NULL;
+  BIGNUM *shared_secret = NULL;
+  D_Keys *dkey = NULL;
+  // receive HELLO from the client and check type and length
+  if (recv_frame(fd, &hello_in) == -1)
+    goto cleanup;
+  if (hello_in.type != MSG_HELLO || hello_in.len != DH_PUB_LEN)
+    goto cleanup;
+  // bytes -> BIGNUM, then validate
+  peer_pub = BN_bin2bn(hello_in.payload, hello_in.len, NULL);
+  if (!peer_pub || !valid_pub_key(peer_pub))
+    goto cleanup;
+  shared_secret = dh_generate_shared(k->private_key, peer_pub);
+  if (!shared_secret)
+    goto cleanup;
+  // send server HELLO to the client
+  hello_out = gen_hello_msg(k);
+  if (!hello_out || send_frame(fd, hello_out) == -1)
+    goto cleanup;
+  dkey = derive_keys(shared_secret, k->public_key, peer_pub);
+  if (!dkey)
+    goto cleanup;
+  print_hex("encryption_client", dkey->encryption_client, 32);
+  print_hex("encryption_server", dkey->encryption_server, 32);
+  print_hex("client_mac_key", dkey->client_mac_key, 32);
+  print_hex("server_mac_key", dkey->server_mac_key, 32);
+  rc = 0;
+cleanup:
+  if (hello_out) {
+    frame_free(hello_out);
+    free(hello_out);
+  }
+  frame_free(&hello_in);
+  BN_free(peer_pub);
+  BN_clear_free(shared_secret);
+  OPENSSL_clear_free(dkey, sizeof *dkey);
+  cleanup_keys(k);
+  return rc;
+}
+
+D_Keys *derive_keys(const BIGNUM *shared_secret, const BIGNUM *pub_server,
+                    const BIGNUM *pub_client) {
   uint8_t sec[DH_PUB_LEN];
   uint8_t salt[2 * DH_PUB_LEN];
-  BN_bn2binpad(shared_secret, sec, DH_PUB_LEN);
-  BN_bn2binpad(pub_server, salt, DH_PUB_LEN);
-  BN_bn2binpad(pub_client, salt + DH_PUB_LEN, DH_PUB_LEN);
-
-  // 2. HKDF-Extract Phase: Hash the secret using the salt to get a 32-byte
-  // PRK
-  unsigned char prk[32];
-  short_hmac(salt, 2 * DH_PUB_LEN, sec, DH_PUB_LEN, prk);
-
-  // 3. HKDF-Expand Phase: Generate final keys using simple distinct labels
-  const uint8_t *info_srv = (const uint8_t *)"server_enc";
-  const uint8_t *info_cli = (const uint8_t *)"client_enc";
-  const uint8_t *info_mac_srv = (const uint8_t *)"mac_auth_srv";
-  const uint8_t *info_mac_cli = (const uint8_t *)"mac_auth_cli";
-  short_hmac(prk, 32, info_srv, 10, keys->encryption_server);
-  short_hmac(prk, 32, info_cli, 10, keys->encryption_client);
-  short_hmac(prk, 32, info_mac_srv, strlen((const char *)info_mac_srv),
-             keys->server_mac_key);
-  short_hmac(prk, 32, info_mac_cli, strlen((const char *)info_mac_cli),
-             keys->client_mac_key);
+  uint8_t prk[KDF_LEN];
+  D_Keys *keys = OPENSSL_zalloc(sizeof *keys);
+  if (!keys)
+    return NULL;
+  // fixed-length encodings, so both sides feed identical bytes into the KDF
+  if (BN_bn2binpad(shared_secret, sec, DH_PUB_LEN) != DH_PUB_LEN ||
+      BN_bn2binpad(pub_server, salt, DH_PUB_LEN) != DH_PUB_LEN ||
+      BN_bn2binpad(pub_client, salt + DH_PUB_LEN, DH_PUB_LEN) != DH_PUB_LEN)
+    goto fail;
+  // extract: compress the secret into one 32-byte PRK, salted with both public
+  // values
+  if (kdf_extract(salt, sizeof salt, sec, sizeof sec, prk) != 0)
+    goto fail;
+  // expand: one key per label
+  if (kdf_expand(prk, "server_enc", keys->encryption_server) ||
+      kdf_expand(prk, "client_enc", keys->encryption_client) ||
+      kdf_expand(prk, "mac_auth_srv", keys->server_mac_key) ||
+      kdf_expand(prk, "mac_auth_cli", keys->client_mac_key))
+    goto fail;
+  OPENSSL_cleanse(sec, sizeof sec);
+  OPENSSL_cleanse(prk, sizeof prk);
   return keys;
+fail:
+  OPENSSL_cleanse(sec, sizeof sec);
+  OPENSSL_cleanse(prk, sizeof prk);
+  OPENSSL_clear_free(keys, sizeof *keys);
+  return NULL;
 }
