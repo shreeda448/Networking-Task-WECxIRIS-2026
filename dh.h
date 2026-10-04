@@ -13,6 +13,13 @@ typedef struct {
   BIGNUM *public_key;
 } Keys;
 
+typedef struct {
+  uint8_t encryption_server[32];
+  uint8_t encryption_client[32];
+  uint8_t server_mac_key[32];
+  uint8_t client_mac_key[32];
+} D_Keys;
+
 void cleanup_keys(Keys *k);
 
 int valid_priv_key(BIGNUM *priv);

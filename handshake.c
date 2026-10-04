@@ -1,8 +1,21 @@
 #include "handshake.h"
 #include "frame.h"
 #include <openssl/bn.h>
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
+#include <openssl/kdf.h>
 #include <sched.h>
 #include <stdint.h>
+#include <string.h>
+
+// just a temperory helper to print hex
+static void print_hex(const char *label, const uint8_t *data, size_t len) {
+  printf("%s: ", label);
+  for (size_t i = 0; i < len; i++) {
+    printf("%02X", data[i]);
+  }
+  printf("\n");
+}
 
 Keys *gen_key_pair() {
   Keys *k = NULL;
@@ -112,12 +125,11 @@ int do_handshake_client(int fd, Keys *k) {
     return -1;
   }
 
-  BN_print_fp(stdout, shared_secret);
-  printf("\n");
-  // TODO: remove the free statement of shared_secret in later levels
-  BN_clear_free(shared_secret);
-  BN_free(ret);
-  // TODO: generate transcript and derived keys: for this i need the public keys
+  D_Keys *dkey = derive_keys(shared_secret, ret, k->public_key);
+  print_hex("encryption_client", dkey->encryption_client, 32);
+  print_hex("encryption_server", dkey->encryption_server, 32);
+  print_hex("client_mac_key", dkey->client_mac_key, 32);
+  print_hex("server_mac_key", dkey->server_mac_key, 32);
   return 0;
 };
 
@@ -165,11 +177,6 @@ int do_handshake_server(int fd, Keys *k) {
     BN_free(ret);
     return -1;
   }
-  BN_print_fp(stdout, shared_secret);
-  printf("\n");
-  // TODO: remove the free statement of shared_secret in later levels
-  BN_clear_free(shared_secret);
-  BN_free(ret);
   // send HELLO to the client
   Frame *hello_to_client = gen_hello_msg(k);
   if (!hello_to_client) {
@@ -184,6 +191,48 @@ int do_handshake_server(int fd, Keys *k) {
     cleanup_keys(k);
     return -1;
   }
-  // TODO: generate transcript and derived keys: for this i need the public keys
+  D_Keys *dkey = derive_keys(shared_secret, k->public_key, ret);
+  print_hex("encryption_client", dkey->encryption_client, 32);
+  print_hex("encryption_server", dkey->encryption_server, 32);
+  print_hex("client_mac_key", dkey->client_mac_key, 32);
+  print_hex("server_mac_key", dkey->server_mac_key, 32);
   return 0;
 };
+
+void short_hmac(const uint8_t *key, int key_len, const uint8_t *data,
+                int data_len, uint8_t *out) {
+  uint32_t out_len;
+  // key = salt = public_key_client || public_key_server
+  // data = shared_secret
+  // *out = output buffer
+  // out_len = number of bytes written
+  HMAC(EVP_sha256(), key, key_len, data, data_len, out, &out_len);
+}
+
+D_Keys *derive_keys(BIGNUM *shared_secret, BIGNUM *pub_server,
+                    BIGNUM *pub_client) {
+  D_Keys *keys = malloc(sizeof(D_Keys));
+  uint8_t sec[DH_PUB_LEN];
+  uint8_t salt[2 * DH_PUB_LEN];
+  BN_bn2binpad(shared_secret, sec, DH_PUB_LEN);
+  BN_bn2binpad(pub_server, salt, DH_PUB_LEN);
+  BN_bn2binpad(pub_client, salt + DH_PUB_LEN, DH_PUB_LEN);
+
+  // 2. HKDF-Extract Phase: Hash the secret using the salt to get a 32-byte
+  // PRK
+  unsigned char prk[32];
+  short_hmac(salt, 2 * DH_PUB_LEN, sec, DH_PUB_LEN, prk);
+
+  // 3. HKDF-Expand Phase: Generate final keys using simple distinct labels
+  const uint8_t *info_srv = (const uint8_t *)"server_enc";
+  const uint8_t *info_cli = (const uint8_t *)"client_enc";
+  const uint8_t *info_mac_srv = (const uint8_t *)"mac_auth_srv";
+  const uint8_t *info_mac_cli = (const uint8_t *)"mac_auth_cli";
+  short_hmac(prk, 32, info_srv, 10, keys->encryption_server);
+  short_hmac(prk, 32, info_cli, 10, keys->encryption_client);
+  short_hmac(prk, 32, info_mac_srv, strlen((const char *)info_mac_srv),
+             keys->server_mac_key);
+  short_hmac(prk, 32, info_mac_cli, strlen((const char *)info_mac_cli),
+             keys->client_mac_key);
+  return keys;
+}
