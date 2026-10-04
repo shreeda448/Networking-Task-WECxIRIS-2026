@@ -102,6 +102,8 @@ cleanup:
     frame_free(hello_out);
     free(hello_out);
   }
+  //TODO: remove the free statement of the public keys of server and client later and free them only after the 
+  // transcript has been generated
   frame_free(&hello_in);
   BN_free(peer_pub);
   BN_clear_free(shared_secret);
@@ -148,6 +150,8 @@ cleanup:
     frame_free(hello_out);
     free(hello_out);
   }
+  //TODO: remove the free statement of the public keys of server and client later and free them only after the 
+  // transcript has been generated
   frame_free(&hello_in);
   BN_free(peer_pub);
   BN_clear_free(shared_secret);

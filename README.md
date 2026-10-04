@@ -6,6 +6,8 @@ This is a TLS-inspired protocol over raw TCP sockets implemented in C.
 
 - [x] Level 1 done
 - [x] Level 2 done
+- [x] Level 3 done
+
 
 ## Build and run
 
@@ -60,6 +62,7 @@ cmake --build build
 
 ```bash
 ./build/test_frame
+./build/test_dh
 ```
 
 ## Project structure
@@ -78,6 +81,7 @@ Table of files and the one job each has (net, io, frame, config, server, client,
 | config     | constant values/parameters (DH 2048-bit prime, generator, port)                 |
 | test_frame | unit tests for transmission of frames, encoding and decoding etc                |
 | test_dh    | unit tests for DH prime, key generation, bounds and random distribution         |
+| kdf | key derivation functions |
 
 ## Level 1: framing
 
@@ -127,6 +131,20 @@ Table of files and the one job each has (net, io, frame, config, server, client,
 ### HELLO Frame = |type (1B = 0x01)|len (4B = 0x00000100 = 256)|payload (256 bytes public key)|
 ```
 
+## Level 3: Key derivation
+
+![key-derivation](docs/derived-keys.png)
+
+- Derived 4 keys using the shared secret key ,
+   - encryption-key for server
+   - encryption-key for client
+   - mac-key for server
+   - mac-key for client
+
+- 2 encryption keys to prevent Reflection attacks
+- 2 MAC for verification of handshake in both sides
+- I have used HMAC for key extraction phase as well as key expansion phase of the key derivation.
+
 ## Design decisions
 
 - **TCP needs framing:** it's a byte stream with no message boundaries, and a single recv can return part of a message or parts of two. That's why read_all and write_all exist.
@@ -138,6 +156,9 @@ Table of files and the one job each has (net, io, frame, config, server, client,
 - **Chose MODP Group 14 (RFC 3526):** it's a published safe prime in the RFC
 - **Key validation:** Simple checks for validation of private and public keys that AI told me where sufficient,but my core idea was before I operate on the keys I should know if it is a valid key or not , just like before dereferencing a pointer I should check if it is a nullptr.
 - **Fixed 256-byte wire length (DH_PUB_LEN):** Raw BN_num_bytes can return 255 bytes if the most significant byte is 0x00. Using BN_bn2binpad pads with leading zeros so the wire format is always deterministic and fixed-length.
+- **HMAC for key derivation:** Using HMAC for key derivation is a standard practice in cryptography. It is a pseudorandom function that is used to derive keys from a shared secret key. 
+- I did not use standard HKDF function from `openssl` as it had lot of boilerplate code and I did not have time to understand it and use it
+- I have used HMAC-SHA-256 instead of just SHA-256 as we also need to be able to encrypt/decrypt the messages if we know the key which plain SHA-256 does not provide it only does hashing  
 
 ## Testing
 
@@ -236,6 +257,10 @@ The server printed `type=3 len=5` and echoed the frame back.
 
 - **Missing `return` on socket errors:** If `recv_frame()` returned -1, execution continued past the error check and dereferenced an unpopulated frame. Fix: added an explicit `return -1;` on all failure branches.
 
+- **Memory leak in multiple places** like if a frame is not recieved or if key if the shared key generation fails the memory was not getting freed in those cases 
+
+- **Not cleansing the stack** when exiting or returning on error, used `OPENSSL_cleanse()` for cleansing and then `OPENSSL_clear_free()` for freeing the memory
+
 ## Known limitations / next steps
 
 **Limitations (Level 1)**
@@ -255,9 +280,14 @@ The server printed `type=3 len=5` and echoed the frame back.
 - **Raw shared secret used directly:** The 2048-bit BIGNUM shared secret cannot be directly plugged into symmetric ciphers (AES expects 128/256-bit keys).
 - **Vulnerable to active Man-in-the-Middle (MITM):** The public keys travel in plaintext with no signature or certificate, so an active attacker could intercept and substitute their own public keys. Handshake confirmation (Level 4) detects tampering and identity keys (Level 8) prevents impersonation.
 
+**Limitations (Level 3)**
+
+- **NO production level key derivation is used deriving the keys:** I use my own way HKDF inspired way to derive the keys . Only one block used in the key-expansion phase.
+- **I am printing keys in the log:** which is not a good practice for security.
+- **I am freeing the public keys before generating the transcript for the MAC tag bits**: this works for now but will have to fix it later
+
 **Next steps**
 
-- Level 3: Implement Key Derivation (KDF) using SHA-256 to derive separate encryption and MAC keys from the shared secret.
 - Level 4: Confirm Handshake success/failure using transcript
 - Level 5 design note: the frame header (type + length) has to stay in plaintext because `recv_frame` reads it before anything can be decrypted. So the MAC will cover the header as well as the ciphertext (`seq || type || length || iv || ciphertext`). Otherwise an attacker could change a `DATA` frame's type to `CLOSE` or `ALERT` and the tag would still verify.
 
@@ -265,3 +295,4 @@ The server printed `type=3 len=5` and echoed the frame back.
 
 [▶️ Watch Level 1 Demo](https://drive.google.com/file/d/1Kb9xT1hujZ1XPJt3FfBvtfFBpkin1HJh/view?usp=sharing)
 [▶️ Watch Level 2 Demo](https://drive.google.com/file/d/1d6PWBhfg9uPqFjPny4FsMjNku7GWyXuz/view?usp=drive_link)
+[▶️ Watch Level 3 Demo](https://drive.google.com/file/d/1Z48A76xxsMzrI7V3Wo7-plzflSdr8h6O/view?usp=drive_link)
