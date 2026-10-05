@@ -5,8 +5,8 @@
 
 // HMAC-SHA256(key, data) -> out. Both phases are just this call with different
 // arguments.
-static int hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *data,
-                       size_t data_len, uint8_t out[KDF_LEN]) {
+int hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *data,
+                size_t data_len, uint8_t out[KDF_LEN]) {
   unsigned int out_len = 0;
   if (!HMAC(EVP_sha256(), key, (int)key_len, data, data_len, out, &out_len) ||
       out_len != KDF_LEN)

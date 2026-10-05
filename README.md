@@ -7,6 +7,7 @@ This is a TLS-inspired protocol over raw TCP sockets implemented in C.
 - [x] Level 1 done
 - [x] Level 2 done
 - [x] Level 3 done
+- [x] Level 4 done
 
 
 ## Build and run
@@ -44,6 +45,14 @@ cmake --build build
 ### to disable debug run the same cmd but replace ON with OFF
 ```
 
+- Build the simulated-tampering variants (see Testing -> Tampering test), one build directory per case
+
+```bash
+cmake -S . -B build-tamper -DCMAKE_C_FLAGS="-DCSL_TAMPER=1" && cmake --build build-tamper
+cmake -S . -B build-t2 -DCMAKE_C_FLAGS="-DCSL_TAMPER=2" && cmake --build build-t2
+cmake -S . -B build-t3 -DCMAKE_C_FLAGS="-DCSL_TAMPER=3" && cmake --build build-t3
+```
+
 ### Run commands
 
 - Running the server
@@ -65,6 +74,17 @@ cmake --build build
 ./build/test_dh
 ```
 
+- Running the tamper tests
+
+```bash
+./build-tamper/server
+./build-tamper/client
+./build-t2/server
+./build-t2/client
+./build-t3/server
+./build-t3/client
+```
+
 ## Project structure
 
 Table of files and the one job each has (net, io, frame, config, server, client, test_frame).
@@ -74,14 +94,14 @@ Table of files and the one job each has (net, io, frame, config, server, client,
 | server     | the main tcp server connecting to the client                                    |
 | client     | client connecting to the tcp server                                             |
 | net        | methods for tcp server/client                                                   |
-| io         | methods for sending and recieving fixed length messages                         |
+| io         | methods for sending and recieving fixed length messages                         |     
 | frame      | methods for sending and recieving one frame,encoding and decoding of the header |
 | dh         | DH parameters, keypair generation, public key and shared secret derivation      |
 | handshake  | methods for exchanging public keys using HELLO frames and deriving secrets      |
 | config     | constant values/parameters (DH 2048-bit prime, generator, port)                 |
 | test_frame | unit tests for transmission of frames, encoding and decoding etc                |
 | test_dh    | unit tests for DH prime, key generation, bounds and random distribution         |
-| kdf | key derivation functions |
+| kdf        | key derivation functions                                                        |
 
 ## Level 1: framing
 
@@ -96,7 +116,7 @@ Table of files and the one job each has (net, io, frame, config, server, client,
 | Type     | Hex  | Usecase                                                                                                      |
 | -------- | ---- | ------------------------------------------------------------------------------------------------------------ |
 | HELLO    | 0x01 | Exchanging public keys                                                                                       |
-| FINISHED | 0x02 | Successfully connected to the client                                                                         |
+| FINISHED | 0x02 | MAC tag proving both sides derived the same keys                                                                         |
 | DATA     | 0x03 | Messages                                                                                                     |
 | ALERT    | 0x04 | Alert messages in case any tampering while transmission after encrypting with the MAC key or any other error |
 | CLOSE    | 0x05 | Closing the connection                                                                                       |
@@ -145,6 +165,38 @@ Table of files and the one job each has (net, io, frame, config, server, client,
 - 2 MAC for verification of handshake in both sides
 - I have used HMAC for key extraction phase as well as key expansion phase of the key derivation.
 
+## Level 4: Handshake confirmation
+
+![handshake-success](docs/handshake-success.png)
+
+- Both sides derive the 4 keys on their own, so no key is ever sent. To prove the keys match, each side sends a **FINISHED** frame whose payload is a 32-byte HMAC tag over the handshake transcript.
+- **Flow (who sends what, in which order):** (this diagram is AI generated)
+
+```txt
+client                                          server
+  | -- HELLO (client public key) -------------->  |
+  | <------------- HELLO (server public key) ---  |
+  derive 4 keys                           derive 4 keys
+  | -- FINISHED (tag_c) ----------------------->  |  verify tag_c, abort on mismatch
+  | <---------------------- FINISHED (tag_s) ---  |  (sent only after tag_c verified)
+  verify tag_s, abort on mismatch
+```
+
+- **Transcript** = `server_public_key || client_public_key` (2 x 256 bytes, always the server's value first, whichever side is computing it). It is the same byte string I use as the salt in the key derivation, built by `gen_salt()`.
+- **Tags** (`gen_tag()`):
+
+```txt
+tag_c = HMAC-SHA256(client_mac_key, transcript || "client sends")
+tag_s = HMAC-SHA256(server_mac_key, transcript || "server sends")
+```
+
+- **FINISHED frame:** `|type (0x02)|len (0x00000020 = 32)|payload (32 byte tag)|`
+- **Verification:** the receiver checks `type == FINISHED` and `len == 32` first, recomputes the tag from its own key and its own copy of the transcript, and compares with `CRYPTO_memcmp` (constant time, so the comparison doesn't leak how many bytes matched).
+- **Why a matching tag proves matching keys:** only someone holding the MAC key can compute the tag for that exact transcript. If the keys differ by even one bit, the tags are completely different. Nothing secret crosses the wire, and the tag can't be reversed to get the key.
+- **Why the two directions use different keys and labels:** the client's tag can't be sent back to the client as if it were the server's (reflection), because the client verifies with `server_mac_key` and the label `"server sends"`.
+- **On failure:** the side that detects it prints `failed`, sends an ALERT frame (best effort), frees everything and returns -1, so the program exits with status 1. No DATA is ever sent after a failed handshake.
+
+
 ## Design decisions
 
 - **TCP needs framing:** it's a byte stream with no message boundaries, and a single recv can return part of a message or parts of two. That's why read_all and write_all exist.
@@ -158,7 +210,12 @@ Table of files and the one job each has (net, io, frame, config, server, client,
 - **Fixed 256-byte wire length (DH_PUB_LEN):** Raw BN_num_bytes can return 255 bytes if the most significant byte is 0x00. Using BN_bn2binpad pads with leading zeros so the wire format is always deterministic and fixed-length.
 - **HMAC for key derivation:** Using HMAC for key derivation is a standard practice in cryptography. It is a pseudorandom function that is used to derive keys from a shared secret key. 
 - I did not use standard HKDF function from `openssl` as it had lot of boilerplate code and I did not have time to understand it and use it
-- I have used HMAC-SHA-256 instead of just SHA-256 as we also need to be able to encrypt/decrypt the messages if we know the key which plain SHA-256 does not provide it only does hashing  
+- The reason for HMAC is that it's keyed: the salt acts as the key in extract and the PRK as the key in expand, so the output depends on a secret, which a plain hash doesn't.
+- **Server verifies before it sends:** the server checks the client's FINISHED tag first and only then sends its own. If it sent first, a bad client tag would make the server fail after the client had already accepted a valid server tag, so the two sides would disagree about whether the handshake worked.
+- **Same bytes for salt and transcript:** both public values are validated (below `p`) and always serialized to a fixed 256 bytes, so re-encoding them gives exactly what was sent on the wire. One helper (`gen_salt`) builds it, so the key derivation and the tags can't drift apart.
+- **Arguments passed by role, not by "mine and theirs":** `gen_salt(server_pub, client_pub)` must receive the server's value first on both sides, so the client calls it with `(peer_pub, my_pub)` and the server with `(my_pub, peer_pub)`.
+- **ALERT is best effort and not trusted:** it is unauthenticated, so an attacker could send a fake one. The receiver treats it only as "close the connection", never as something to act on.
+- **One `cleanup:` label per handshake function:** every pointer is declared and set to `NULL`/`{0}` at the top, every failure does `goto cleanup`, and cleanup frees everything (freeing `NULL` is safe). This removed about a dozen copies of the same free list and fixed several leaks.
 
 ## Testing
 
@@ -235,6 +292,24 @@ The server printed `type=3 len=5` and echoed the frame back.
 ![tcp-dump](docs/tcp-dump.png)
 ![unit-tests](docs/unit_tests.png)
 
+### Tampering test (Level 4)
+
+The task asks to tamper with a public value and confirm the handshake aborts. I simulate it with a compile-time flag `CSL_TAMPER` (not defined in a normal build). The client changes the bytes right after receiving them, as if they had been altered on the wire. Each case has its own build directory (see Build commands), and the server is restarted before every run.
+
+| Case | What is changed | Expected | Result |
+| ---- | --------------- | -------- | ------ |
+| control (normal build) | nothing | both print the success line, client exit status 0 | passed |
+| `CSL_TAMPER=1` | 1 bit of the server's public value flipped (still a valid number) | keys differ, so the tags mismatch, both sides print `failed` | both failed, client exit status 1 |
+| `CSL_TAMPER=2` | server's public value replaced with the value 1 | rejected by public key validation, both sides `failed` | both failed, client exit status 1 |
+| `CSL_TAMPER=3` | 1 bit of the client's FINISHED tag flipped | server's check fails, it sends an ALERT without sending its own FINISHED, both `failed` | both failed, client exit status 1 |
+
+![tamper-case-1](docs/tamper-1.png)
+![tamper-case-2](docs/tamper-2.png)
+![tamper-case-3](docs/tamper-3.png)
+
+- I also sent a frame of the wrong type to the server with `nc` (`printf '\x03\x00\x00\x00\x05hello' | nc 127.0.0.1 8080`): it is rejected at the HELLO type check and the server aborts cleanly with no crash.
+- **AddressSanitizer:** I built the client and server with `-fsanitize=address,undefined` and ran the success path and one tamper case. No invalid frees or leaks were reported.
+
 ## Setbacks and debugging
 
 - **The `n == 0` bug in my first client/server loops:** I used `if (n == 0)` after `send` to switch from sending to receiving. But `recv` returns 0 only when the peer closes (EOF), while `send` returns how many bytes it queued and never 0 for a non-empty message. So the client's `ok` flag never flipped: it kept sending the same message forever and never reached `recv`, and the server waited in `recv` for an EOF that never came. I dropped the flag-based loop and use a fixed request/response order built on frames.
@@ -261,6 +336,20 @@ The server printed `type=3 len=5` and echoed the frame back.
 
 - **Not cleansing the stack** when exiting or returning on error, used `OPENSSL_cleanse()` for cleansing and then `OPENSSL_clear_free()` for freeing the memory
 
+- **Salt built in opposite orders on the two sides:** my first handshake test printed `failed` on both sides even though every function looked right. `gen_salt(pub_server, pub_client)` expects the server's value first, but on the server I passed `(peer_pub, my_pub)`, which is the client's value first. The roles flip between client and server, so a call that was right for one was wrong for the other. The salts differed, so the PRKs, the 4 keys and the tags all differed. Fix: pass `(my_pub, peer_pub)` on the server.
+
+- **Inverted `CRYPTO_memcmp` check:** I wrote `if (!CRYPTO_memcmp(...)) goto cleanup;`. Like `memcmp`, it returns 0 when the buffers are *equal*, so a matching tag took the failure path (and a mismatching one would have passed). Fix: `!= 0`.
+
+- **`goto cleanup` jumping over declarations:** `Frame out` and `salt` were declared after the first `goto`, so an early failure skipped their initialisers and `cleanup` called `frame_free` on uninitialised memory. Fix: declare and initialise everything that `cleanup` touches at the top.
+
+- **HMAC key and data swapped in `gen_tag`:** I passed the transcript as the HMAC key and the MAC key as the data. Both sides did the same, so it still "worked", but the tag no longer depended on the MAC key as a key. Fix: MAC key is the key, transcript plus label is the data.
+
+- **Server compared the wrong tag:** it compared its own outgoing tag against the client's payload, which can never match. Fix: compare the freshly computed `tag_c`.
+
+- **Leftover check from an old return convention:** after moving the reorder, `send_frame()` (0 = success) was followed by `if (!res) goto cleanup;`, a leftover from `gen_tag()` (1 = success). The server therefore always failed, which looked identical to my tamper tests (everything printed `failed`). The lesson: always run the control case first, and make failures print *why* they happened.
+
+- **Server sent its FINISHED before verifying the client's:** a bad client tag then made the client report success while the server failed. Fix: verify first, send second.
+
 ## Known limitations / next steps
 
 **Limitations (Level 1)**
@@ -282,13 +371,19 @@ The server printed `type=3 len=5` and echoed the frame back.
 
 **Limitations (Level 3)**
 
-- **NO production level key derivation is used deriving the keys:** I use my own way HKDF inspired way to derive the keys . Only one block used in the key-expansion phase.
-- **I am printing keys in the log:** which is not a good practice for security.
-- **I am freeing the public keys before generating the transcript for the MAC tag bits**: this works for now but will have to fix it later
+- **Not a production KDF:** my own HKDF-inspired extract and expand with HMAC-SHA256, with only one block in the expand phase (each key is exactly one hash output), and not the RFC 5869 version.
+
+**Limitations (Level 4)**
+
+- **Detects tampering, doesn't prove identity:** an attacker who runs two separate exchanges, one with each side, and relays between them produces consistent keys on both legs, so both FINISHED checks pass. That needs signatures and certificates (Level 8).
+- **Tampering is simulated at the receiving end** with a compile-time flag, not by a relay changing bytes in transit.
+- **ALERT frames are unauthenticated:** they are best effort, and the receiver only closes the connection.
+- **Derived keys are not handed back to the caller yet:** the handshake functions use them for FINISHED and then free them. Level 5 needs them for DATA, so the signature has to change.
+- **No handshake timeout:** a peer that stalls mid-handshake blocks `recv_frame` forever.
 
 **Next steps**
 
-- Level 4: Confirm Handshake success/failure using transcript
+- Level 5: return the derived keys from the handshake, then encrypt every DATA frame and authenticate it with the MAC key (per direction), with sequence numbers and a fresh IV per message.
 - Level 5 design note: the frame header (type + length) has to stay in plaintext because `recv_frame` reads it before anything can be decrypted. So the MAC will cover the header as well as the ciphertext (`seq || type || length || iv || ciphertext`). Otherwise an attacker could change a `DATA` frame's type to `CLOSE` or `ALERT` and the tag would still verify.
 
 ## Demos
@@ -296,3 +391,4 @@ The server printed `type=3 len=5` and echoed the frame back.
 [▶️ Watch Level 1 Demo](https://drive.google.com/file/d/1Kb9xT1hujZ1XPJt3FfBvtfFBpkin1HJh/view?usp=sharing)
 [▶️ Watch Level 2 Demo](https://drive.google.com/file/d/1d6PWBhfg9uPqFjPny4FsMjNku7GWyXuz/view?usp=drive_link)
 [▶️ Watch Level 3 Demo](https://drive.google.com/file/d/1Z48A76xxsMzrI7V3Wo7-plzflSdr8h6O/view?usp=drive_link)
+[▶️ Watch Level 4 Demo](https://drive.google.com/file/d/1LyQzuDkZcfl2kvCZsTwdbB6G2rt9c09R/view?usp=drive_link)
