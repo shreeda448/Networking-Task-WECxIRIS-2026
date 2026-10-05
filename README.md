@@ -413,6 +413,13 @@ The task asks to tamper with a public value and confirm the handshake aborts. I 
 - Achieve concurrent messaging by implementing an event-loop (simultaneous reads and writes)
 - figure out a way to redirect the message source (client A) to destination (client B) with the server acting as the central part which redirects the message
     - I probably have to assign each client a ID and and this client ID in the header , so the server would iterate through its list of socket connections and send it to the matching client ID (This is my idea but not sure if it an optimal way)
+- Enabling duplex communication :
+    -  maintain 2 fd's for each connection( 1 for read and 1 for write)
+    - Waiting for IO readiness using poll() function  ( `int poll(struct pollfd *fds, nfds_t nfds, int timeout);`)
+    - Each connection would have 2 buffers ( 1 read buffer and 1 write buffer)
+    - The OS monitors if any of the connections are ready for IO and informs the event loop for the corresponding read or write operation is done in non-blocking manner
+    - Normally if the read operation is done but the buffer is empty it waits until the data arrives which blocking, but using the `O_NONBLOCK` flag in the read() changes its behaviour
+    - After the flag is enabled the read operation does not wait for the data to come if it was empty initially it automatically closes the operation and returns some error
     
 ## Demos
 
