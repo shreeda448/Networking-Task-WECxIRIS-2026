@@ -3,6 +3,8 @@
 #include <openssl/hmac.h>
 #include <string.h>
 
+// TODO: Remove the 2 mac-key generation
+
 // HMAC-SHA256(key, data) -> out. Both phases are just this call with different
 // arguments.
 int hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *data,
