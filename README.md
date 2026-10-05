@@ -404,6 +404,8 @@ The task asks to tamper with a public value and confirm the handshake aborts. I 
 
 - **simple one way communication only**: client sends the message and server echos it back to the client after encrypting and it again
 - **Closing the connection on-purpose**: This is not possible as of now, I have to force kill the process using `CTRL + C` for now
+- **No ALERT checks after handshake**:Even if the message type was ALERT or FINISHED or HELLO the response is the same, close the connection, ideally only close the connection if type is ALERT else just drop the packet 
+- **Replaying the same messages would work**:If an attacker resends the same messages that were sent earlier , server would still decrypt it again which is not ideal, ideally we should drop the packet
 
 **Next steps**
 

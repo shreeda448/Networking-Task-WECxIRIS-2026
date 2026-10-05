@@ -36,6 +36,9 @@ int main(void) {
   while (1) {
     Frame out = {0};
     res = recv_frame(connfd, &out);
+    if (out.type != MSG_DATA) {
+      goto clean;
+    }
     size_t ciphertext_len = out.len - NONCE_SIZE - TAG_SIZE;
     unsigned char *nonce = out.payload;
     unsigned char *ciphertext = out.payload + NONCE_SIZE;
