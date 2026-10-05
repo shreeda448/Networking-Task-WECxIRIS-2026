@@ -56,7 +56,7 @@ Frame *gen_hello_msg(Keys *k) {
   return f;
 };
 
-int do_handshake_client(int fd, Keys *k) {
+int do_handshake_client(int fd, Keys *k, D_Keys *dk) {
   if (!k)
     return -1;
   int rc = -1;
@@ -106,6 +106,7 @@ int do_handshake_client(int fd, Keys *k) {
   if (!dkey) {
     goto cleanup;
   }
+  *dk = *dkey;
   uint8_t tag_c[KDF_LEN];
   res = gen_tag(dkey->client_mac_key, salt, 2 * DH_PUB_LEN, 12,
                 (uint8_t *)"client sends", tag_c);
@@ -134,7 +135,6 @@ int do_handshake_client(int fd, Keys *k) {
   }
   if (CRYPTO_memcmp(tag_s, out.payload, KDF_LEN) != 0)
     goto cleanup;
-  printf("handshake successfully completed\n");
   rc = 0;
 cleanup:
   if (rc == -1) {
@@ -157,7 +157,7 @@ cleanup:
   return rc;
 }
 
-int do_handshake_server(int fd, Keys *k) {
+int do_handshake_server(int fd, Keys *k, D_Keys *dk) {
   if (!k)
     return -1;
   int rc = -1;
@@ -197,6 +197,7 @@ int do_handshake_server(int fd, Keys *k) {
   if (!dkey) {
     goto cleanup;
   }
+  *dk = *dkey;
   res = recv_frame(fd, &out);
   if (res < 0 || out.type != MSG_FINISHED || out.len != KDF_LEN) {
     goto cleanup;
@@ -222,7 +223,6 @@ int do_handshake_server(int fd, Keys *k) {
   if (res < 0) {
     goto cleanup;
   }
-  printf("handshake successfull\n");
   rc = 0;
 cleanup:
   if (rc == -1) {

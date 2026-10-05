@@ -5,7 +5,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 add_compile_options(-Wall -Wextra)
 
 find_package(OpenSSL REQUIRED COMPONENTS Crypto SSL)
-set(CSL_SOURCES kdf.c frame.c io.c handshake.c net.c dh.c)
+set(CSL_SOURCES enc.c chat.c kdf.c frame.c io.c handshake.c net.c dh.c)
 
 option(CSL_DEBUG "Print debug messages" OFF)
 if(CSL_DEBUG)

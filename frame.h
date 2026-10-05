@@ -1,5 +1,6 @@
 #ifndef CSL_FRAME_H
 #define CSL_FRAME_H
+#include "enc.h"
 #include "stdint.h"
 #define HEADER_SIZE 5
 #define MAX_PAYLOAD (1u << 20)

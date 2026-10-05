@@ -46,13 +46,15 @@ int gcm_encrypt(unsigned char *plaintext, int plaintext_len, unsigned char *aad,
   ciphertext_len += len;
 
   /* Get authentication tag */
-  if (1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, tag))
+  if (1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, TAG_SIZE, tag))
     goto error;
 
   /* Clean up */
   EVP_CIPHER_CTX_free(ctx);
 
   *l = ciphertext_len;
+
+  printf("encrypted succeeded\n");
   return 0;
 
 error:
@@ -96,7 +98,7 @@ int gcm_decrypt(unsigned char *ciphertext, int ciphertext_len,
   plaintext_len = len;
 
   /* Set expected authentication tag */
-  if (1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16, tag))
+  if (1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, TAG_SIZE, tag))
     goto error;
 
   /*
@@ -111,6 +113,7 @@ int gcm_decrypt(unsigned char *ciphertext, int ciphertext_len,
 
   if (ret > 0) {
     plaintext_len += len;
+    printf("decrypted succeeded\n");
     return plaintext_len;
   }
 

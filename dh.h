@@ -2,7 +2,8 @@
 #define CSL_DH_H
 #include "openssl/bn.h"
 #include <stdint.h>
-#define DH_PUB_LEN 256    // 2048 bits, big-endian on the wire
+#define DH_PUB_LEN 256 // 2048 bits, big-endian on the wire
+#define MAX_BUFFER 1024
 int dh_init(void);        // parse p and g, build a BN_CTX; 0 on success
 void dh_cleanup(void);    // frees the memory of  these BIGNUM's
 const BIGNUM *dh_p(void); // getters for  p and g;

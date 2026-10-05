@@ -8,6 +8,7 @@ This is a TLS-inspired protocol over raw TCP sockets implemented in C.
 - [x] Level 2 done
 - [x] Level 3 done
 - [x] Level 4 done
+- [x] Level 5 done
 
 
 ## Build and run
@@ -102,6 +103,8 @@ Table of files and the one job each has (net, io, frame, config, server, client,
 | test_frame | unit tests for transmission of frames, encoding and decoding etc                |
 | test_dh    | unit tests for DH prime, key generation, bounds and random distribution         |
 | kdf        | key derivation functions                                                        |
+| enc        | AES-GCM encrypt and decrypt functions, nonce generation function                |
+| chat       | encrypted payload generation function                                           |
 
 ## Level 1: framing
 
@@ -196,6 +199,14 @@ tag_s = HMAC-SHA256(server_mac_key, transcript || "server sends")
 - **Why the two directions use different keys and labels:** the client's tag can't be sent back to the client as if it were the server's (reflection), because the client verifies with `server_mac_key` and the label `"server sends"`.
 - **On failure:** the side that detects it prints `failed`, sends an ALERT frame (best effort), frees everything and returns -1, so the program exits with status 1. No DATA is ever sent after a failed handshake.
 
+## Level 5: Encrypted Authenticated Messaging
+
+![enc_msg](docs/encrypted-msg.png)
+
+- Final Frame Structure = `|type|length|payload|`
+    - here `payload = |nonce|ciphertext|authtag|`
+- Allowing multiple messages to be sent from the client to the server using a `while()` loop
+- I am using AES-GCM for encrypting and authentication 
 
 ## Design decisions
 
@@ -216,6 +227,7 @@ tag_s = HMAC-SHA256(server_mac_key, transcript || "server sends")
 - **Arguments passed by role, not by "mine and theirs":** `gen_salt(server_pub, client_pub)` must receive the server's value first on both sides, so the client calls it with `(peer_pub, my_pub)` and the server with `(my_pub, peer_pub)`.
 - **ALERT is best effort and not trusted:** it is unauthenticated, so an attacker could send a fake one. The receiver treats it only as "close the connection", never as something to act on.
 - **One `cleanup:` label per handshake function:** every pointer is declared and set to `NULL`/`{0}` at the top, every failure does `goto cleanup`, and cleanup frees everything (freeing `NULL` is safe). This removed about a dozen copies of the same free list and fixed several leaks.
+- **Using MAC keys only for the handshake**: AES-GCM bcoz it removes one whole layer of protocol design   
 
 ## Testing
 
@@ -350,6 +362,13 @@ The task asks to tamper with a public value and confirm the handshake aborts. I 
 
 - **Server sent its FINISHED before verifying the client's:** a bad client tag then made the client report success while the server failed. Fix: verify first, send second.
 
+- **Getting the enc-keys from the handshake function failed**: Bcoz of pass-by-value
+
+- **Taking the message lenght as input and still the whole message is getting stored even if it is larger:** reason I allocated far larger static memory so removed the size input itself 
+
+- **logging failed decryption as success:** just switched the place of the log
+
+- **failed decryption due to using wrong encryption key for decrypting:** I was using server-end-key for decrypting client msg and vice-versa which was obv wrong
 ## Known limitations / next steps
 
 **Limitations (Level 1)**
@@ -381,14 +400,26 @@ The task asks to tamper with a public value and confirm the handshake aborts. I 
 - **Derived keys are not handed back to the caller yet:** the handshake functions use them for FINISHED and then free them. Level 5 needs them for DATA, so the signature has to change.
 - **No handshake timeout:** a peer that stalls mid-handshake blocks `recv_frame` forever.
 
+**Limitations (Level 5)**
+
+- **simple one way communication only**: client sends the message and server echos it back to the client after encrypting and it again
+- **Closing the connection on-purpose**: This is not possible as of now, I have to force kill the process using `CTRL + C` for now
+
 **Next steps**
 
-- Level 5: return the derived keys from the handshake, then encrypt every DATA frame and authenticate it with the MAC key (per direction), with sequence numbers and a fresh IV per message.
-- Level 5 design note: the frame header (type + length) has to stay in plaintext because `recv_frame` reads it before anything can be decrypted. So the MAC will cover the header as well as the ciphertext (`seq || type || length || iv || ciphertext`). Otherwise an attacker could change a `DATA` frame's type to `CLOSE` or `ALERT` and the tag would still verify.
-
+- Level 6: Wrap everything into a 1 on 1 chat application
+- Achieve concurrent messaging by implementing an event-loop (simultaneous reads and writes)
+- figure out a way to redirect the message source (client A) to destination (client B) with the server acting as the central part which redirects the message
+    - I probably have to assign each client a ID and and this client ID in the header , so the server would iterate through its list of socket connections and send it to the matching client ID (This is my idea but not sure if it an optimal way)
+    
 ## Demos
 
 [▶️ Watch Level 1 Demo](https://drive.google.com/file/d/1Kb9xT1hujZ1XPJt3FfBvtfFBpkin1HJh/view?usp=sharing)
+
 [▶️ Watch Level 2 Demo](https://drive.google.com/file/d/1d6PWBhfg9uPqFjPny4FsMjNku7GWyXuz/view?usp=drive_link)
+
 [▶️ Watch Level 3 Demo](https://drive.google.com/file/d/1Z48A76xxsMzrI7V3Wo7-plzflSdr8h6O/view?usp=drive_link)
+
 [▶️ Watch Level 4 Demo](https://drive.google.com/file/d/1LyQzuDkZcfl2kvCZsTwdbB6G2rt9c09R/view?usp=drive_link)
+
+[▶️ Watch Level 5 Demo](https://drive.google.com/file/d/19QYEFvmp0ib9MM2ARNV_-UyyNvGK6cau/view?usp=drive_link)
